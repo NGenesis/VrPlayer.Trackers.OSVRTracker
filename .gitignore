@@ -1,0 +1,14 @@
+
+# Visual Studio
+
+_ReSharper.*
+
+*.suo
+
+obj
+
+bin
+
+*.user
+*.exe
+*.msi
