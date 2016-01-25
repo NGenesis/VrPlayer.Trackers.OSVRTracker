@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Windows.Threading;
 using System.Windows.Media.Media3D;
+using System.Windows.Input;
 using VrPlayer.Contracts.Trackers;
 using VrPlayer.Helpers;
 
@@ -12,13 +13,19 @@ namespace VrPlayer.Trackers.OSVRTracker
     unsafe public class OSVRTracker : TrackerBase, ITracker
     {
         [DllImport(@"OSVRWrapper.dll", CharSet = CharSet.Ansi, CallingConvention = CallingConvention.Cdecl)]
-        static extern int OSVR_Init(string contextname);
+        static extern bool OSVR_Init(string contextname);
 
         [DllImport(@"OSVRWrapper.dll", CallingConvention = CallingConvention.Cdecl)]
-        static extern int OSVR_GetHMDRotation(float* w, float* x, float* y, float* z);
+        static extern void OSVR_Update();
 
         [DllImport(@"OSVRWrapper.dll", CallingConvention = CallingConvention.Cdecl)]
-        static extern int OSVR_GetHMDPosition(float* x, float* y, float* z);
+        static extern void OSVR_GetHMDRotation(double* w, double* x, double* y, double* z);
+
+        [DllImport(@"OSVRWrapper.dll", CallingConvention = CallingConvention.Cdecl)]
+        static extern void OSVR_GetHMDPosition(double* x, double* y, double* z);
+
+        [DllImport(@"OSVRWrapper.dll", CallingConvention = CallingConvention.Cdecl)]
+        static extern void OSVR_ResetHMDRotationFromHead();
 
         private readonly DispatcherTimer _timer;
             
@@ -29,6 +36,29 @@ namespace VrPlayer.Trackers.OSVRTracker
             _timer.Tick += timer_Tick;
         }
 
+        public override void Calibrate()
+        {
+            try
+            {
+                // Recenter All View Axes When [Shift] + [KeyTrackerCalibrate]
+                if (Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift))
+                {
+                    RawRotation.Y = 0;
+                    RawRotation.Normalize();
+
+                    base.Calibrate();
+                }
+                
+                // Recenter HMD Using Current Head Rotation
+                OSVR_ResetHMDRotationFromHead();
+
+            }
+            catch (Exception exc)
+            {
+                Logger.Instance.Error(exc.Message, exc);
+            }
+        }
+
         public override void Load()
         {
             try
@@ -36,8 +66,7 @@ namespace VrPlayer.Trackers.OSVRTracker
                 if (!IsEnabled)
                 {
                     IsEnabled = true;
-                    var result = OSVR_Init("VrPlayer.Trackers.OSVRTracker");
-                    ThrowErrorOnResult(result, "Error while initializing OSVR");
+                    if(!OSVR_Init("VrPlayer.Trackers.OSVRTracker")) throw new Exception("Error while initializing OSVR");
                 }
             }
             catch (Exception exc)
@@ -58,13 +87,15 @@ namespace VrPlayer.Trackers.OSVRTracker
         {
             try
             {
-                float w, x, y, z;
-                var result = OSVR_GetHMDRotation(&w, &x, &y, &z);
-                ThrowErrorOnResult(result, "Error while getting rotational data from OSVR");
+                // Update HMD Tracker State
+                OSVR_Update();
+
+                // Retrieve New Position & Rotation From HMD
+                double w, x, y, z;
+                OSVR_GetHMDRotation(&w, &x, &y, &z);
                 RawRotation = new Quaternion(x, -y, z, -w);
 
-                result = OSVR_GetHMDPosition(&x, &y, &z);
-                ThrowErrorOnResult(result, "Error while getting positional data from OSVR");
+                OSVR_GetHMDPosition(&x, &y, &z);
                 RawPosition = new Vector3D(x, y, z);
 
                 UpdatePositionAndRotation();
@@ -72,14 +103,6 @@ namespace VrPlayer.Trackers.OSVRTracker
             catch(Exception exc)
             {
                 Logger.Instance.Error(exc.Message, exc);
-            }
-        }
-
-        private static void ThrowErrorOnResult(int result, string message)
-        {
-            if (result == -1)
-            {
-                throw new Exception(message);
             }
         }
     }
